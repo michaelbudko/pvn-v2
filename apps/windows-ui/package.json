@@ -1,0 +1,27 @@
+{
+  "name": "pvn-v2-windows-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 1421",
+    "build": "tsc && vite build",
+    "build:service": "cargo build --release --manifest-path ../windows-service/Cargo.toml && node scripts/copy-service.mjs",
+    "tauri": "tauri",
+    "tauri:dev": "npm run build:service && tauri dev",
+    "tauri:build": "npm run build:service && tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.2.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "typescript": "^5.7.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.6.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "vite": "^6.4.3"
+  }
+}

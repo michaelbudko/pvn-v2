@@ -1,0 +1,33 @@
+name: Windows Client CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  windows-client:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/windows-ui/package-lock.json
+      - run: rustup update stable
+      - run: npm ci
+        working-directory: apps/windows-ui
+      - run: cargo test
+        working-directory: apps/windows-service
+      - run: npm run build
+        working-directory: apps/windows-ui
+      - run: npm run build:service
+        working-directory: apps/windows-ui
+      - run: cargo check
+        working-directory: apps/windows-ui/src-tauri
+      - run: npm run tauri:build
+        working-directory: apps/windows-ui

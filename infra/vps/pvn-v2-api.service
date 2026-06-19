@@ -1,0 +1,16 @@
+[Unit]
+Description=PVN v2 API
+After=network-online.target wg-quick@wg-pvn-v2.service
+Wants=network-online.target wg-quick@wg-pvn-v2.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/pvn-v2
+EnvironmentFile=/etc/pvn-v2/api.env
+ExecStart=/opt/pvn-v2/api
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

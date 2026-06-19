@@ -1,0 +1,16 @@
+[package]
+name = "pvn-v2-service"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+base64 = "0.22"
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+

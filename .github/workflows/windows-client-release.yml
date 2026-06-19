@@ -1,0 +1,115 @@
+name: PVN v2 Windows Client Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/windows-ui/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/api/go.mod
+      - run: rustup update stable
+
+      - name: Backend tests
+        run: go test ./...
+        working-directory: services/api
+
+      - name: Install UI dependencies
+        run: npm ci
+        working-directory: apps/windows-ui
+
+      - name: Service tests
+        run: cargo test
+        working-directory: apps/windows-service
+
+      - name: Build service resource
+        run: npm run build:service
+        working-directory: apps/windows-ui
+
+      - name: Sign helper service if configured
+        env:
+          WINDOWS_CODESIGN_CERT_BASE64: ${{ secrets.WINDOWS_CODESIGN_CERT_BASE64 }}
+          WINDOWS_CODESIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_CERT_PASSWORD }}
+          WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_CODESIGN_TIMESTAMP_URL }}
+        run: |
+          .\scripts\release\sign-windows-artifacts.ps1 -Paths @("apps\windows-ui\src-tauri\resources\pvn-v2-service.exe")
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: apps/windows-ui
+
+      - name: Build Tauri app without bundle
+        run: npx tauri build --no-bundle --ci
+        working-directory: apps/windows-ui
+
+      - name: Sign main executable if configured
+        env:
+          WINDOWS_CODESIGN_CERT_BASE64: ${{ secrets.WINDOWS_CODESIGN_CERT_BASE64 }}
+          WINDOWS_CODESIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_CERT_PASSWORD }}
+          WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_CODESIGN_TIMESTAMP_URL }}
+        run: |
+          .\scripts\release\sign-windows-artifacts.ps1 -Paths @("apps\windows-ui\src-tauri\target\release\pvn-v2-windows-ui.exe")
+
+      - name: Bundle NSIS installer
+        run: npx tauri bundle --bundles nsis --ci
+        working-directory: apps/windows-ui
+
+      - name: Rename installer
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          $installer = Get-ChildItem "apps\windows-ui\src-tauri\target\release\bundle\nsis" -Filter "*setup.exe" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+          if (-not $installer) { throw "NSIS installer was not created." }
+          Copy-Item -LiteralPath $installer.FullName -Destination "release\PVN-v2-Windows-Setup.exe" -Force
+          Get-Item "release\PVN-v2-Windows-Setup.exe"
+
+      - name: Sign installer if configured
+        env:
+          WINDOWS_CODESIGN_CERT_BASE64: ${{ secrets.WINDOWS_CODESIGN_CERT_BASE64 }}
+          WINDOWS_CODESIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_CERT_PASSWORD }}
+          WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_CODESIGN_TIMESTAMP_URL }}
+        run: |
+          .\scripts\release\sign-windows-artifacts.ps1 -Paths @("release\PVN-v2-Windows-Setup.exe")
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PVN-v2-Windows-Setup
+          path: release/PVN-v2-Windows-Setup.exe
+
+      - name: Publish GitHub release artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title $tag --notes "PVN v2 Windows client release."
+          }
+          gh release upload $tag release\PVN-v2-Windows-Setup.exe --clobber
+
+      - name: Release summary
+        run: |
+          $signing = -not [string]::IsNullOrWhiteSpace("${{ secrets.WINDOWS_CODESIGN_CERT_BASE64 }}")
+          "signing_enabled=$signing"
+          "installer_artifact=release\PVN-v2-Windows-Setup.exe"
+          "wireguard_dependency_behavior_documented=true"
+          "tests_passed=true"
+          "real_e2e_required_before_prod_ready=true"

@@ -1,0 +1,41 @@
+name: Integration CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  ci-safe-integration:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/api/go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/windows-ui/package-lock.json
+      - run: rustup update stable
+      - run: go test ./...
+        working-directory: services/api
+      - run: cargo test
+        working-directory: apps/windows-service
+      - run: npm ci
+        working-directory: apps/windows-ui
+      - run: npm run build
+        working-directory: apps/windows-ui
+      - name: Verify UI does not call WireGuard directly
+        run: |
+          if (Select-String -Path "apps/windows-ui/src/**/*" -Pattern "wireguard|installtunnelservice|uninstalltunnelservice" -CaseSensitive:$false -ErrorAction SilentlyContinue) {
+            throw "UI must not call WireGuard directly."
+          }
+      - name: CI-safe status
+        run: |
+          "CI-safe tests passed."
+          "Real VPN E2E is manual/self-hosted only. Do not call this release tested until scripts/e2e/windows-vpn-e2e.ps1 proves the public IP changes."
