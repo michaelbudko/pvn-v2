@@ -28,9 +28,10 @@ go test ./...
 go build -buildvcs=false -o api ./cmd/api
 go build -buildvcs=false -o seed-user ./cmd/seed-user
 
-cp api "${APP_DIR}/api"
+systemctl stop pvn-v2-api 2>/dev/null || true
+install -m 0755 api "${APP_DIR}/api.new"
+mv "${APP_DIR}/api.new" "${APP_DIR}/api"
 cp -R migrations "${APP_DIR}/migrations"
-chmod 0755 "${APP_DIR}/api"
 
 cat > "${ENV_FILE}" <<EOF
 API_HOST=127.0.0.1
