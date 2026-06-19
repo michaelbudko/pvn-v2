@@ -73,7 +73,7 @@ function Remove-OwnedTunnels {
     Write-Log "WireGuard executable not found during pre-cleanup."
     return
   }
-  foreach ($name in @("pvn-v2", "pvn", "PVN", "vpn-mvp", "VPN MVP")) {
+  foreach ($name in @("pvn-v2")) {
     $output = & $wg /uninstalltunnelservice $name 2>&1 | Out-String
     Write-Log "cleanup tunnel=$name exit=$LASTEXITCODE output=$($output.Trim())"
   }
