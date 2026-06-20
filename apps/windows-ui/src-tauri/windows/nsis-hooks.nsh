@@ -74,10 +74,15 @@ service_failed:
 FunctionEnd
 
 Function un.PVN_UninstallHelperService
+  StrCmp $UpdateMode "1" update_mode
   DetailPrint "Stopping PVN helper service..."
   IfFileExists "$INSTDIR\resources\uninstall-helper-service.ps1" 0 +3
     nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\uninstall-helper-service.ps1"'
     Pop $0
   nsExec::ExecToLog 'sc.exe delete PVNv2Helper'
   Pop $0
+  Return
+
+update_mode:
+  DetailPrint "Skipping PVN helper service removal during update."
 FunctionEnd

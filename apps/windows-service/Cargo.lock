@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "pvn-v2-service"
-version = "0.1.0"
+version = "0.1.3"
 dependencies = [
  "base64",
  "rand_core",

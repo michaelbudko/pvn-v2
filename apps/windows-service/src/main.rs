@@ -10,7 +10,7 @@ use std::{
     process::Command,
     sync::{mpsc, Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -214,13 +214,19 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
             &self.wireguard_exe,
             &["/installtunnelservice", config_path.as_str()],
         )?;
-        if !self.verifier.tunnel_active(TUNNEL_NAME) {
+        if !self.wait_for_tunnel_active(tunnel_activation_timeout()) {
             let _ = self.cleanup();
             self.status.state = VpnState::Error;
             self.status.last_error = "PVN tunnel did not become active".to_string();
             return Err(self.status.last_error.clone());
         }
-        let public_ip = self.verifier.public_ip()?;
+        let public_ip = match self.verifier.public_ip() {
+            Ok(public_ip) => public_ip,
+            Err(err) => {
+                let _ = self.cleanup();
+                return Err(self.fail(err));
+            }
+        };
         if public_ip != EXPECTED_PUBLIC_IP || !self.verifier.internet_ok() {
             let _ = self.cleanup();
             self.status.state = VpnState::Error;
@@ -344,11 +350,32 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
         Ok(())
     }
 
+    fn wait_for_tunnel_active(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.verifier.tunnel_active(TUNNEL_NAME) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+    }
+
     fn fail(&mut self, message: String) -> String {
         self.status.state = VpnState::Error;
         self.status.last_error = message.clone();
         message
     }
+}
+
+fn tunnel_activation_timeout() -> Duration {
+    env::var("PVN_V2_TUNNEL_WAIT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_secs(30))
 }
 
 fn validate_wireguard_config(config: &WireGuardConfig) -> Result<(), String> {
