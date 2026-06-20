@@ -154,6 +154,31 @@ func TestConfigMaterialHasNoBlankFields(t *testing.T) {
 	}
 }
 
+func TestConfigMaterialUsesV2IPv4FullTunnelDefaults(t *testing.T) {
+	ctx := context.Background()
+	store := testStore(t)
+	defer store.Close()
+	user := seedUser(t, store, "alice@example.com")
+	key := mustKey(t)
+
+	_, material, err := store.CreateOrGetDevice(ctx, user.ID, "Alice PC", key.PublicKey().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(material.ClientAddress, "10.88.0.") || !strings.HasSuffix(material.ClientAddress, "/32") {
+		t.Fatalf("expected v2 client /32 address in 10.88.0.0/24, got %q", material.ClientAddress)
+	}
+	if material.Endpoint != "api-v2.45.63.22.174.sslip.io:51821" {
+		t.Fatalf("expected v2 endpoint port 51821, got %q", material.Endpoint)
+	}
+	if material.AllowedIPs != "0.0.0.0/0" {
+		t.Fatalf("expected IPv4 full tunnel AllowedIPs, got %q", material.AllowedIPs)
+	}
+	if strings.Contains(material.AllowedIPs, "::/0") {
+		t.Fatalf("IPv6 full tunnel must not be enabled until IPv6 routing exists: %q", material.AllowedIPs)
+	}
+}
+
 func testStore(t *testing.T) *Store {
 	t.Helper()
 	return openStore(t, testConfig(t))

@@ -27,16 +27,70 @@ function Write-Log {
   $line | Tee-Object -FilePath $LogPath -Append
 }
 
+function Invoke-Curl4 {
+  param([Parameter(Mandatory = $true)] [string]$Url)
+
+  $output = & cmd.exe /d /c "curl.exe -4 --fail --silent --show-error --max-time 15 $Url 2>&1" | Out-String
+  $exitCode = $LASTEXITCODE
+  $trimmed = $output.Trim()
+  if ($exitCode -ne 0) {
+    if ($trimmed -match "Could not resolve host|Name or service not known") {
+      throw "DNS failure during IPv4 check url=$Url exit=$exitCode detail=$trimmed"
+    }
+    if ($trimmed -match "timed out|Failed to connect|Could not connect|Connection refused") {
+      throw "TCP failure during IPv4 check url=$Url exit=$exitCode detail=$trimmed"
+    }
+    throw "IPv4 curl failed url=$Url exit=$exitCode detail=$trimmed"
+  }
+  if ([string]::IsNullOrWhiteSpace($trimmed)) {
+    throw "IPv4 curl returned empty response url=$Url"
+  }
+  return $trimmed
+}
+
 function Get-PublicIp {
-  return (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 15).Trim()
+  return Invoke-Curl4 -Url "https://api.ipify.org"
 }
 
 function Test-Internet {
   try {
-    $null = Invoke-WebRequest -Uri "https://example.com" -TimeoutSec 15 -UseBasicParsing
+    $null = Invoke-Curl4 -Url "https://ipv4.icanhazip.com"
     return $true
   } catch {
+    Write-Log "internet_check_failed=$($_.Exception.Message)"
     return $false
+  }
+}
+
+function Write-NetworkSnapshot {
+  param([string]$Label)
+
+  try {
+    $routes = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -ErrorAction Stop |
+      Select-Object ifIndex, InterfaceAlias, NextHop, RouteMetric, ifMetric |
+      ConvertTo-Json -Compress
+    Write-Log "network_${Label}_default_routes=$routes"
+  } catch {
+    Write-Log "network_${Label}_default_routes_error=$($_.Exception.Message)"
+  }
+
+  try {
+    $dns = Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction Stop |
+      Select-Object InterfaceAlias, ServerAddresses |
+      ConvertTo-Json -Compress
+    Write-Log "network_${Label}_dns=$dns"
+  } catch {
+    Write-Log "network_${Label}_dns_error=$($_.Exception.Message)"
+  }
+
+  try {
+    $adapters = Get-NetAdapter -ErrorAction Stop |
+      Where-Object { $_.Status -eq "Up" -or $_.Name -match "PVN|WireGuard|pvn" -or $_.InterfaceDescription -match "WireGuard" } |
+      Select-Object Name, InterfaceDescription, Status, ifIndex |
+      ConvertTo-Json -Compress
+    Write-Log "network_${Label}_adapters=$adapters"
+  } catch {
+    Write-Log "network_${Label}_adapters_error=$($_.Exception.Message)"
   }
 }
 
@@ -106,17 +160,26 @@ function Wait-PublicIp {
     [int]$Seconds = 75
   )
   $deadline = (Get-Date).AddSeconds($Seconds)
+  $lastError = ""
   do {
-    $ip = Get-PublicIp
-    Write-Log "observed_public_ip=$ip"
-    if ($ShouldEqual -and $ip -eq $Expected) {
-      return $ip
-    }
-    if (-not $ShouldEqual -and $ip -ne $Expected) {
-      return $ip
+    try {
+      $ip = Get-PublicIp
+      Write-Log "observed_public_ip=$ip"
+      if ($ShouldEqual -and $ip -eq $Expected) {
+        return $ip
+      }
+      if (-not $ShouldEqual -and $ip -ne $Expected) {
+        return $ip
+      }
+    } catch {
+      $lastError = $_.Exception.Message
+      Write-Log "public_ip_check_failed=$lastError"
     }
     Start-Sleep -Seconds 3
   } while ((Get-Date) -lt $deadline)
+  if (-not [string]::IsNullOrWhiteSpace($lastError)) {
+    throw "Timed out waiting for public IP condition because IPv4 public IP checks failed. expected=$Expected should_equal=$ShouldEqual last_error=$lastError"
+  }
   throw "Timed out waiting for public IP condition. expected=$Expected should_equal=$ShouldEqual last=$ip"
 }
 
@@ -231,10 +294,14 @@ try {
   if (-not (Test-Internet)) {
     throw "Internet check failed before connect."
   }
+  Write-NetworkSnapshot -Label "before_connect"
 
   $connectedIp = Connect-Pvn -ApiUrl $ApiUrl
+  Write-NetworkSnapshot -Label "after_connect"
   $disconnectedIp = Disconnect-Pvn
+  Write-NetworkSnapshot -Label "after_disconnect"
   $reconnectedIp = Connect-Pvn -ApiUrl $ApiUrl
+  Write-NetworkSnapshot -Label "after_reconnect"
   $finalIp = Disconnect-Pvn
 
   $summary = [ordered]@{
@@ -253,6 +320,7 @@ try {
   $summary | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $ArtifactDir "windows-vpn-e2e-$Timestamp.json")
   Write-Host "PVN v2 E2E passed. Log: $LogPath"
 } catch {
+  Write-NetworkSnapshot -Label "failure"
   Write-Log "FAILED: $($_.Exception.Message)"
   Write-Error $_.Exception.Message
   exit 1

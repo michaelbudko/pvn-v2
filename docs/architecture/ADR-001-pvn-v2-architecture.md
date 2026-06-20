@@ -84,6 +84,11 @@ The WireGuard GUI is never launched. PVN manages one canonical tunnel name:
 
 - `pvn-v2`
 
+Before installing the full-tunnel route, the helper adds a PVN-owned `/32`
+host route for the WireGuard endpoint so UDP handshakes to the VPS do not get
+captured by the tunnel default route. Cleanup removes only the route PVN
+created.
+
 The service may clean up PVN-owned legacy names only. It must not touch unrelated user tunnels.
 
 ## Backend

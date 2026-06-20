@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
     io::{ErrorKind, Read, Write},
+    net::ToSocketAddrs,
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::Command,
@@ -19,6 +20,8 @@ const WINDOWS_SERVICE_NAME: &str = "PVNv2Helper";
 const TUNNEL_NAME: &str = "pvn-v2";
 const EXPECTED_PUBLIC_IP: &str = "45.63.22.174";
 const DEFAULT_API_URL: &str = "https://api-v2.45.63.22.174.sslip.io";
+const PUBLIC_IP_URL: &str = "https://api.ipify.org";
+const INTERNET_CHECK_URL: &str = "https://ipv4.icanhazip.com";
 const PROGRAM_DATA_DIR: &str = r"C:\ProgramData";
 const SERVICE_DATA_DIR_NAME: &str = "PVN v2";
 const HELPER_TOKEN_FILE_NAME: &str = "helper-token";
@@ -77,6 +80,7 @@ struct ServicePaths {
     token: PathBuf,
     private_key: PathBuf,
     config: PathBuf,
+    endpoint_route: PathBuf,
 }
 
 struct TunnelController<R: Runner, V: Verifier> {
@@ -120,24 +124,11 @@ struct NetworkVerifier;
 
 impl Verifier for NetworkVerifier {
     fn public_ip(&self) -> Result<String, String> {
-        Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .map_err(|err| err.to_string())?
-            .get("https://api.ipify.org")
-            .send()
-            .map_err(|err| err.to_string())?
-            .text()
-            .map(|value| value.trim().to_string())
-            .map_err(|err| err.to_string())
+        curl_ipv4_text(PUBLIC_IP_URL)
     }
 
     fn internet_ok(&self) -> bool {
-        Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .and_then(|client| client.get("https://ipv4.icanhazip.com").send())
-            .is_ok_and(|response| response.status().is_success())
+        curl_ipv4_text(INTERNET_CHECK_URL).is_ok()
     }
 
     fn tunnel_active(&self, name: &str) -> bool {
@@ -163,6 +154,7 @@ impl ServicePaths {
             token: root.join(HELPER_TOKEN_FILE_NAME),
             private_key: root.join("client-private.key"),
             config: root.join("pvn-v2.conf"),
+            endpoint_route: root.join("endpoint-route.txt"),
             root,
         }
     }
@@ -207,6 +199,9 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
         };
         validate_wireguard_config(&config).map_err(|err| self.fail(err))?;
         self.cleanup()?;
+        let endpoint_ip = endpoint_ipv4(&config.endpoint).map_err(|err| self.fail(err))?;
+        self.ensure_endpoint_route(&endpoint_ip)
+            .map_err(|err| self.fail(err))?;
         fs::write(&self.paths.config, render_config(&config)).map_err(|err| err.to_string())?;
         let config_path = self
             .paths
@@ -228,13 +223,23 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
             Ok(public_ip) => public_ip,
             Err(err) => {
                 let _ = self.cleanup();
-                return Err(self.fail(err));
+                return Err(self.fail(format!("IPv4 public IP verification failed: {err}")));
             }
         };
-        if public_ip != EXPECTED_PUBLIC_IP || !self.verifier.internet_ok() {
+        if public_ip != EXPECTED_PUBLIC_IP {
             let _ = self.cleanup();
             self.status.state = VpnState::Error;
-            self.status.last_error = format!("VPN verification failed: public_ip={public_ip}");
+            self.status.last_error = format!(
+                "VPN verification failed: expected_public_ip={EXPECTED_PUBLIC_IP} observed_public_ip={public_ip}"
+            );
+            return Err(self.status.last_error.clone());
+        }
+        if !self.verifier.internet_ok() {
+            let _ = self.cleanup();
+            self.status.state = VpnState::Error;
+            self.status.last_error = format!(
+                "VPN tunnel active but IPv4 internet check failed after public_ip={public_ip}"
+            );
             return Err(self.status.last_error.clone());
         }
         self.status.state = VpnState::On;
@@ -278,10 +283,41 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
             &self.wireguard_exe,
             &["/uninstalltunnelservice", TUNNEL_NAME],
         );
+        self.remove_endpoint_route();
         if self.paths.config.exists() {
             fs::remove_file(&self.paths.config).map_err(|err| err.to_string())?;
         }
         Ok(())
+    }
+
+    fn ensure_endpoint_route(&mut self, endpoint_ip: &str) -> Result<(), String> {
+        let script = add_endpoint_route_script(endpoint_ip);
+        let output = self.runner.run(
+            Path::new("powershell.exe"),
+            &["-NoProfile", "-Command", &script],
+        )?;
+        if output.contains("CREATED") {
+            fs::write(&self.paths.endpoint_route, endpoint_ip).map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn remove_endpoint_route(&mut self) {
+        if !self.paths.endpoint_route.exists() {
+            return;
+        }
+        let endpoint_ip = match fs::read_to_string(&self.paths.endpoint_route) {
+            Ok(value) => value.trim().to_string(),
+            Err(_) => String::new(),
+        };
+        if !endpoint_ip.is_empty() {
+            let script = delete_endpoint_route_script(&endpoint_ip);
+            let _ = self.runner.run(
+                Path::new("powershell.exe"),
+                &["-NoProfile", "-Command", &script],
+            );
+        }
+        let _ = fs::remove_file(&self.paths.endpoint_route);
     }
 
     fn load_or_create_private_key(&self) -> Result<String, String> {
@@ -386,6 +422,88 @@ fn tunnel_activation_timeout() -> Duration {
         .and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_millis)
         .unwrap_or_else(|| Duration::from_secs(30))
+}
+
+fn curl_ipv4_text(url: &str) -> Result<String, String> {
+    let args = curl_ipv4_args(url);
+    let output = Command::new("curl.exe")
+        .args(&args)
+        .output()
+        .map_err(|err| format!("curl.exe IPv4 check could not start: {err}"))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        return Err(format!(
+            "curl.exe -4 {url} failed with exit={:?}: {detail}",
+            output.status.code()
+        ));
+    }
+    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if value.is_empty() {
+        return Err(format!("curl.exe -4 {url} returned an empty response"));
+    }
+    Ok(value)
+}
+
+fn curl_ipv4_args(url: &str) -> Vec<String> {
+    [
+        "-4",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "15",
+        url,
+    ]
+    .iter()
+    .map(|arg| (*arg).to_string())
+    .collect()
+}
+
+fn endpoint_ipv4(endpoint: &str) -> Result<String, String> {
+    let (host, port) = endpoint
+        .rsplit_once(':')
+        .ok_or_else(|| "WireGuard endpoint must be host:port".to_string())?;
+    if host.trim().is_empty() || port.trim().is_empty() {
+        return Err("WireGuard endpoint must include host and port".to_string());
+    }
+    let addrs = (
+        host.trim(),
+        port.trim()
+            .parse::<u16>()
+            .map_err(|_| "WireGuard endpoint port must be numeric".to_string())?,
+    )
+        .to_socket_addrs()
+        .map_err(|err| format!("resolve WireGuard endpoint failed: {err}"))?;
+    for addr in addrs {
+        if addr.ip().is_ipv4() {
+            return Ok(addr.ip().to_string());
+        }
+    }
+    Err("WireGuard endpoint did not resolve to an IPv4 address".to_string())
+}
+
+fn add_endpoint_route_script(endpoint_ip: &str) -> String {
+    format!(
+        "$ErrorActionPreference='Stop'; \
+         $target='{endpoint_ip}'; \
+         $existing=Get-NetRoute -DestinationPrefix \"$target/32\" -ErrorAction SilentlyContinue | Select-Object -First 1; \
+         if ($existing) {{ 'EXISTS'; exit 0 }}; \
+         $route=Get-NetRoute -DestinationPrefix '0.0.0.0/0' | Where-Object {{ $_.NextHop -and $_.NextHop -ne '0.0.0.0' }} | Sort-Object RouteMetric,InterfaceMetric | Select-Object -First 1; \
+         if (-not $route) {{ throw 'no default IPv4 gateway route found' }}; \
+         route.exe ADD $target MASK 255.255.255.255 $route.NextHop METRIC 1 IF $route.ifIndex | Out-Null; \
+         if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; \
+         'CREATED'"
+    )
+}
+
+fn delete_endpoint_route_script(endpoint_ip: &str) -> String {
+    format!(
+        "$target='{endpoint_ip}'; \
+         route.exe DELETE $target MASK 255.255.255.255 | Out-Null; \
+         exit 0"
+    )
 }
 
 fn validate_wireguard_config(config: &WireGuardConfig) -> Result<(), String> {
@@ -739,6 +857,23 @@ mod tests {
     }
 
     #[test]
+    fn connect_does_not_mark_on_when_public_ip_is_wrong() {
+        let mut controller = test_controller(
+            MockRunner::default(),
+            MockVerifier {
+                public_ip: "108.204.244.53".to_string(),
+                internet: true,
+                active: true,
+            },
+        );
+        let err = controller
+            .connect_with_config(valid_config())
+            .expect_err("wrong public IP should fail");
+        assert!(err.contains("expected_public_ip"));
+        assert_eq!(controller.status().state, VpnState::Error);
+    }
+
+    #[test]
     fn disconnect_does_not_mark_off_until_cleanup_verification_passes() {
         let mut controller = test_controller(MockRunner::default(), MockVerifier::on());
         let err = controller.disconnect().expect_err("tunnel still active");
@@ -841,6 +976,25 @@ mod tests {
     }
 
     #[test]
+    fn public_ip_verification_uses_curl_ipv4() {
+        let args = curl_ipv4_args(PUBLIC_IP_URL);
+        assert!(args.contains(&"-4".to_string()));
+        assert!(args.contains(&PUBLIC_IP_URL.to_string()));
+    }
+
+    #[test]
+    fn endpoint_route_scripts_target_vps_host_route() {
+        let add = add_endpoint_route_script(EXPECTED_PUBLIC_IP);
+        assert!(add.contains(EXPECTED_PUBLIC_IP));
+        assert!(add.contains("0.0.0.0/0"));
+        assert!(add.contains("route.exe ADD"));
+        assert!(add.contains("255.255.255.255"));
+        let delete = delete_endpoint_route_script(EXPECTED_PUBLIC_IP);
+        assert!(delete.contains("route.exe DELETE"));
+        assert!(delete.contains(EXPECTED_PUBLIC_IP));
+    }
+
+    #[test]
     fn windows_service_mode_requires_explicit_flag() {
         assert!(wants_windows_service(vec![
             "pvn-v2-service.exe".to_string(),
@@ -922,6 +1076,19 @@ mod tests {
                 self.status.state = VpnState::Error;
                 return Err("PVN tunnel did not become active".to_string());
             }
+            let public_ip = self.verifier.public_ip()?;
+            if public_ip != EXPECTED_PUBLIC_IP {
+                let _ = self.cleanup();
+                self.status.state = VpnState::Error;
+                return Err(format!(
+                    "VPN verification failed: expected_public_ip={EXPECTED_PUBLIC_IP} observed_public_ip={public_ip}"
+                ));
+            }
+            if !self.verifier.internet_ok() {
+                let _ = self.cleanup();
+                self.status.state = VpnState::Error;
+                return Err("VPN tunnel active but IPv4 internet check failed".to_string());
+            }
             self.status.state = VpnState::On;
             Ok(self.status())
         }
@@ -945,6 +1112,7 @@ mod tests {
             token: root.join(HELPER_TOKEN_FILE_NAME),
             private_key: root.join("client-private.key"),
             config: root.join("pvn-v2.conf"),
+            endpoint_route: root.join("endpoint-route.txt"),
             root,
         }
     }

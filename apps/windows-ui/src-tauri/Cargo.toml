@@ -1,6 +1,6 @@
 [package]
 name = "pvn-v2-windows-ui"
-version = "0.1.6"
+version = "0.1.7"
 description = "PVN v2 Windows client"
 authors = ["PVN"]
 edition = "2021"

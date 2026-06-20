@@ -42,6 +42,7 @@ systemctl enable "wg-quick@${WG_IFACE}"
 systemctl restart "wg-quick@${WG_IFACE}"
 
 ufw allow "${WG_PORT}/udp" || true
+ufw route allow in on "${WG_IFACE}" out on "${EGRESS_IFACE}" from 10.88.0.0/24 || true
 ufw allow 80/tcp || true
 ufw allow 443/tcp || true
 
