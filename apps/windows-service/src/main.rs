@@ -429,16 +429,50 @@ fn handle_client(
     let response = match (first.starts_with("GET"), first.starts_with("POST"), path) {
         (true, _, "/status") => serde_json::to_value(controller.status()).unwrap(),
         (_, true, "/connect") => {
-            let input: ConnectRequest =
-                serde_json::from_str(body).map_err(|err| err.to_string())?;
-            serde_json::to_value(controller.connect(input).map_err(|err| {
-                controller.status.last_error = err.clone();
-                err
-            })?)
-            .unwrap()
+            let input: ConnectRequest = match serde_json::from_str(body) {
+                Ok(value) => value,
+                Err(err) => {
+                    return write_response(
+                        &mut stream,
+                        400,
+                        &serde_json::json!({"error": format!("invalid request: {err}")}),
+                    );
+                }
+            };
+            match controller.connect(input) {
+                Ok(status) => serde_json::to_value(status).unwrap(),
+                Err(err) => {
+                    controller.status.last_error = err.clone();
+                    return write_response(
+                        &mut stream,
+                        500,
+                        &serde_json::json!({"error": err, "status": controller.status()}),
+                    );
+                }
+            }
         }
-        (_, true, "/disconnect") => serde_json::to_value(controller.disconnect()?).unwrap(),
-        (_, true, "/reset") => serde_json::to_value(controller.reset()?).unwrap(),
+        (_, true, "/disconnect") => match controller.disconnect() {
+            Ok(status) => serde_json::to_value(status).unwrap(),
+            Err(err) => {
+                controller.status.last_error = err.clone();
+                return write_response(
+                    &mut stream,
+                    500,
+                    &serde_json::json!({"error": err, "status": controller.status()}),
+                );
+            }
+        },
+        (_, true, "/reset") => match controller.reset() {
+            Ok(status) => serde_json::to_value(status).unwrap(),
+            Err(err) => {
+                controller.status.last_error = err.clone();
+                return write_response(
+                    &mut stream,
+                    500,
+                    &serde_json::json!({"error": err, "status": controller.status()}),
+                );
+            }
+        },
         (true, _, "/diagnostics") => serde_json::json!({
             "state": controller.status.state,
             "last_verification": controller.status.last_verification,

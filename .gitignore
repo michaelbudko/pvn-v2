@@ -4,6 +4,7 @@ target/
 dist/
 node_modules/
 apps/windows-ui/src-tauri/gen/
+apps/windows-ui/src-tauri/resources/*.exe
 artifacts/
 *.exe
 *.msi

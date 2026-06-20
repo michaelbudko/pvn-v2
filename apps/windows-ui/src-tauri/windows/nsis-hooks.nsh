@@ -3,7 +3,6 @@
 !macroend
 
 !macro NSIS_HOOK_POSTINSTALL
-  Call PVN_PrepareHelperData
   Call PVN_InstallHelperService
 !macroend
 
@@ -56,13 +55,6 @@ wireguard_ready:
   DetailPrint "WireGuard is installed. Continuing PVN installation."
 FunctionEnd
 
-Function PVN_PrepareHelperData
-  DetailPrint "Preparing PVN helper service data..."
-  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$dir=Join-Path $env:ProgramData ''PVNv2''; New-Item -ItemType Directory -Force -Path $dir | Out-Null; $token=Join-Path $dir ''service-token.txt''; if (!(Test-Path $token)) { $bytes=New-Object byte[] 32; $rng=[Security.Cryptography.RandomNumberGenerator]::Create(); $rng.GetBytes($bytes); [Convert]::ToBase64String($bytes) | Set-Content -NoNewline -Encoding ASCII -Path $token }; icacls $dir /grant ''Users:(OI)(CI)RX'' /T /C | Out-Null"'
-  Pop $0
-  DetailPrint "PVN helper data preparation exit code: $0"
-FunctionEnd
-
 Function PVN_InstallHelperService
   DetailPrint "Installing PVN helper service..."
   IfFileExists "$INSTDIR\resources\pvn-v2-service.exe" service_exists
@@ -70,19 +62,10 @@ Function PVN_InstallHelperService
     Abort "PVN helper service is required."
 
 service_exists:
-  nsExec::ExecToLog 'sc.exe stop PVNv2Helper'
+  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\install-helper-service.ps1" -ServiceExe "$INSTDIR\resources\pvn-v2-service.exe"'
   Pop $0
-  nsExec::ExecToLog 'sc.exe delete PVNv2Helper'
-  Pop $0
-  nsExec::ExecToLog 'sc.exe create PVNv2Helper binPath= "\"$INSTDIR\resources\pvn-v2-service.exe\" --service" start= auto DisplayName= "PVN v2 Helper"'
-  Pop $0
-  DetailPrint "PVN helper service create exit code: $0"
+  DetailPrint "PVN helper service install exit code: $0"
   StrCmp $0 "0" 0 service_failed
-  nsExec::ExecToLog 'sc.exe description PVNv2Helper "PVN v2 local VPN helper service"'
-  Pop $0
-  nsExec::ExecToLog 'sc.exe start PVNv2Helper'
-  Pop $0
-  DetailPrint "PVN helper service start exit code: $0"
   Return
 
 service_failed:
@@ -92,8 +75,9 @@ FunctionEnd
 
 Function un.PVN_UninstallHelperService
   DetailPrint "Stopping PVN helper service..."
-  nsExec::ExecToLog 'sc.exe stop PVNv2Helper'
-  Pop $0
+  IfFileExists "$INSTDIR\resources\uninstall-helper-service.ps1" 0 +3
+    nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\uninstall-helper-service.ps1"'
+    Pop $0
   nsExec::ExecToLog 'sc.exe delete PVNv2Helper'
   Pop $0
 FunctionEnd

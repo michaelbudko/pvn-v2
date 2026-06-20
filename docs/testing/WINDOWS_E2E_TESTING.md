@@ -12,7 +12,18 @@ The real E2E test proves:
 - internet still works after disconnect
 - reconnect works without deleting a tunnel manually
 
-Run in PowerShell as Administrator:
+The installer must create and start the canonical helper service:
+
+- service name: `PVNv2Helper`
+- display name: `PVN v2 Helper`
+
+Verify after install:
+
+```powershell
+Get-Service | Where-Object { $_.Name -match "pvn|vpn" -or $_.DisplayName -match "pvn|vpn" }
+```
+
+If PVN v2 is already installed and `PVNv2Helper` is running, run:
 
 ```powershell
 cd C:\Users\MB\Documents\VpnProxy\pvn-v2
@@ -22,7 +33,7 @@ $env:PVN_V2_E2E_API_URL="https://api-v2.45.63.22.174.sslip.io"
 .\scripts\e2e\windows-vpn-e2e.ps1
 ```
 
-To install a freshly built installer before the test:
+To install a freshly built installer before the test, run PowerShell as Administrator:
 
 ```powershell
 .\scripts\e2e\windows-vpn-e2e.ps1 -InstallerPath "C:\path\to\PVN-v2-Windows-Setup.exe"

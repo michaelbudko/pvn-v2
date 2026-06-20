@@ -26,7 +26,11 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
-    "resources": ["resources/pvn-v2-service.exe"],
+    "resources": [
+      "resources/pvn-v2-service.exe",
+      "resources/install-helper-service.ps1",
+      "resources/uninstall-helper-service.ps1"
+    ],
     "windows": {
       "nsis": {
         "installMode": "perMachine",

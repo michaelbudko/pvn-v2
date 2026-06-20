@@ -11,16 +11,15 @@ function Test-IsAdministrator {
   return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-if (-not (Test-IsAdministrator)) {
-  Write-Error "Run this E2E test in PowerShell as Administrator."
-  exit 1
-}
+$IsAdministrator = Test-IsAdministrator
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $ArtifactDir = Join-Path $RepoRoot "artifacts\e2e"
 New-Item -ItemType Directory -Force -Path $ArtifactDir | Out-Null
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $LogPath = Join-Path $ArtifactDir "windows-vpn-e2e-$Timestamp.log"
+$PvnHelperServiceName = "PVNv2Helper"
+$PvnHelperServiceDisplayName = "PVN v2 Helper"
 
 function Write-Log {
   param([string]$Message)
@@ -84,6 +83,27 @@ function Test-TunnelActive {
   $serviceName = "WireGuardTunnel`$$Name"
   $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
   return ($service -and $service.Status -eq "Running")
+}
+
+function Get-PvnHelperService {
+  return Get-Service -Name $PvnHelperServiceName -ErrorAction SilentlyContinue
+}
+
+function Assert-PvnHelperService {
+  $service = Get-PvnHelperService
+  if (-not $service) {
+    throw "PVN v2 helper service is not installed. Run PVN-v2-Windows-Setup.exe first."
+  }
+  Write-Log "helper_service_name=$($service.Name) display=$($service.DisplayName) status=$($service.Status)"
+  if ($service.Status -ne "Running") {
+    try {
+      Start-Service -Name $PvnHelperServiceName
+      $service.WaitForStatus("Running", [TimeSpan]::FromSeconds(30))
+      Write-Log "helper_service_started=$PvnHelperServiceName"
+    } catch {
+      throw "PVN v2 helper service is installed but did not start: $($_.Exception.Message)"
+    }
+  }
 }
 
 function Wait-PublicIp {
@@ -162,6 +182,9 @@ try {
   Write-Log "PVN v2 Windows E2E started."
 
   if ($InstallerPath) {
+    if (-not $IsAdministrator) {
+      throw "Run this E2E test in PowerShell as Administrator when using -InstallerPath."
+    }
     if (-not (Test-Path $InstallerPath)) {
       throw "Installer not found: $InstallerPath"
     }
@@ -183,16 +206,22 @@ try {
   $health = Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))/api/health" -TimeoutSec 20
   Write-Log "api_health=$($health.status)"
 
+  Assert-PvnHelperService
+
   $tokenPath = Join-Path $env:ProgramData "PVNv2\service-token.txt"
   if (-not (Test-Path $tokenPath)) {
-    throw "PVN helper service token not found. Install PVN v2 first."
+    throw "PVN v2 helper service token not found. Run PVN-v2-Windows-Setup.exe first."
   }
   $script:ServiceToken = (Get-Content -LiteralPath $tokenPath -Raw).Trim()
   if ([string]::IsNullOrWhiteSpace($script:ServiceToken)) {
     throw "PVN helper service token is blank."
   }
 
-  Remove-OwnedTunnels
+  if ($IsAdministrator) {
+    Remove-OwnedTunnels
+  } else {
+    Write-Log "direct_wireguard_cleanup=skipped_not_admin"
+  }
   $null = Invoke-PvnService -Method POST -Path "/reset" -Body @{}
 
   $baselineIp = Get-PublicIp

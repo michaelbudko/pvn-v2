@@ -32,6 +32,18 @@ The workflow signs and verifies:
 - main PVN v2 executable
 - NSIS installer
 
+Canonical Windows helper service:
+
+- service name: `PVNv2Helper`
+- display name: `PVN v2 Helper`
+- binary: installed under the PVN v2 app `resources` directory
+
+After installing PVN v2, this command should show the helper service:
+
+```powershell
+Get-Service | Where-Object { $_.Name -match "pvn|vpn" -or $_.DisplayName -match "pvn|vpn" }
+```
+
 Local verification:
 
 ```powershell
