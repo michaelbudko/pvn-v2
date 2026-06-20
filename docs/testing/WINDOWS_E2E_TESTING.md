@@ -18,6 +18,7 @@ The installer must create and start the canonical helper service:
 - display name: `PVN v2 Helper`
 - helper token path: `C:\ProgramData\PVN v2\helper-token`
 - `/status` must work without a helper token
+- `/auth-check` verifies the UI/helper token path before VPN connect
 - protected commands use the helper token and must not return helper 401 after a clean install
 
 Verify after install:
@@ -44,6 +45,22 @@ To install a freshly built installer before the test, run PowerShell as Administ
 ```
 
 Logs are written to `artifacts/e2e/`. They include public IPs, tunnel state, and safe command exit codes. They must not include passwords, tokens, private keys, or WireGuard configs.
+
+The E2E script fails before VPN verification if:
+
+- `http://127.0.0.1:47621/status` returns `401`
+- `http://127.0.0.1:47621/auth-check` returns `401`
+- the `PVNv2Helper` service is missing or stopped and cannot be started
+
+Hard reset if helper auth stays broken after repair:
+
+```powershell
+Stop-Service PVNv2Helper -ErrorAction SilentlyContinue
+sc.exe delete PVNv2Helper
+Remove-Item -Recurse -Force "C:\ProgramData\PVN v2"
+```
+
+Then reinstall the latest `PVN-v2-Windows-Setup.exe` as Administrator.
 
 If internet breaks, restart Windows. The script never runs `netsh reset`, disables adapters, or touches non-PVN tunnels. It only removes PVN-owned tunnel names.
 

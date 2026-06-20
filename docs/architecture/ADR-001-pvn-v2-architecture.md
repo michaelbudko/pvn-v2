@@ -65,8 +65,9 @@ The helper service:
 - stores its machine-wide bearer token at `C:\ProgramData\PVN v2\helper-token`
 - generates that token from the installer or first service startup if it is missing
 - allows read-only `status` and `diagnostics` without a token
-- requires the bearer token for `connect`, `disconnect`, and `reset`
-- exposes only `status`, `connect`, `disconnect`, `reset`, and `diagnostics`
+- requires the bearer token for `connect`, `disconnect`, `reset`, and `auth-check`
+- parses the `Authorization` header case-insensitively so standard HTTP clients do not fail on header casing
+- exposes only `status`, `auth-check`, `connect`, `disconnect`, `reset`, and `diagnostics`
 - never accepts arbitrary commands
 - never logs private keys, backend tokens, or full WireGuard configs
 - only manages PVN-owned tunnel/profile state

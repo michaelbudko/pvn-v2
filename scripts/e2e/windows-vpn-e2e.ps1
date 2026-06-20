@@ -205,6 +205,20 @@ function Invoke-PvnService {
     return Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $json -ContentType "application/json" -TimeoutSec 130
   } catch {
     $detail = $_.Exception.Message
+    $statusCode = $null
+    try {
+      if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+        $statusCode = [int]$_.Exception.Response.StatusCode
+      }
+    } catch {
+      $statusCode = $null
+    }
+    if ($Path -eq "/status" -and $statusCode -eq 401) {
+      throw "PVN helper /status returned 401. /status must be unauthenticated."
+    }
+    if ($Path -eq "/auth-check" -and $statusCode -eq 401) {
+      throw "PVN helper auth preflight returned 401. UI and helper service are not using the same token/auth path."
+    }
     if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
       $detail = "$detail body=$($_.ErrorDetails.Message)"
     }
@@ -278,6 +292,8 @@ try {
   if ([string]::IsNullOrWhiteSpace($script:ServiceToken)) {
     throw "PVN helper service token is blank."
   }
+  $auth = Invoke-PvnService -Method GET -Path "/auth-check"
+  Write-Log "connect_auth_preflight=$($auth.ok)"
 
   if ($IsAdministrator) {
     Remove-OwnedTunnels

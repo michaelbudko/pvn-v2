@@ -39,13 +39,30 @@ Canonical Windows helper service:
 - binary: installed under the PVN v2 app `resources` directory
 - helper token: `C:\ProgramData\PVN v2\helper-token`
 - `/status` and `/diagnostics` are read-only and unauthenticated
-- `/connect`, `/disconnect`, and `/reset` require the helper token
+- `/connect`, `/disconnect`, `/reset`, and `/auth-check` require the helper token
+- helper auth is HTTP-header case-insensitive; installed UI and helper use the same ProgramData token path
 
 After installing PVN v2, this command should show the helper service:
 
 ```powershell
 Get-Service | Where-Object { $_.Name -match "pvn|vpn" -or $_.DisplayName -match "pvn|vpn" }
 ```
+
+Helper IPC verification:
+
+```powershell
+curl.exe http://127.0.0.1:47621/status
+```
+
+That command must return HTTP 200 without an `Authorization` header. If helper repair cannot recover auth state, hard reset PVN v2:
+
+```powershell
+Stop-Service PVNv2Helper -ErrorAction SilentlyContinue
+sc.exe delete PVNv2Helper
+Remove-Item -Recurse -Force "C:\ProgramData\PVN v2"
+```
+
+Then install the latest `PVN-v2-Windows-Setup.exe` again as Administrator.
 
 Local verification:
 

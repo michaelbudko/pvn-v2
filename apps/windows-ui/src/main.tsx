@@ -19,7 +19,7 @@ function friendlyError(error: unknown): string {
     return "PVN helper needs repair. Open Advanced and click Repair Helper.";
   }
   if (text.includes("401") || text.toLowerCase().includes("unauthorized")) {
-    return "PVN helper needs repair. Open Advanced and click Repair Helper.";
+    return "PVN helper authorization failed. Open Advanced and click Repair Helper.";
   }
   if (text.toLowerCase().includes("wireguard")) {
     return "WireGuard is not ready. Reinstall PVN or restart Windows.";
@@ -121,7 +121,22 @@ function App() {
     setError("");
     try {
       const message = await invoke<string>("service_repair_helper");
-      setTechnical(message);
+      const report = await invoke<unknown>("service_diagnostics");
+      setTechnical(`${message}\n\n${JSON.stringify(report, null, 2)}`);
+    } catch (err) {
+      setError(friendlyError(err));
+      setTechnical(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runDiagnostics() {
+    setBusy(true);
+    setError("");
+    try {
+      const report = await invoke<unknown>("service_diagnostics");
+      setTechnical(JSON.stringify(report, null, 2));
     } catch (err) {
       setError(friendlyError(err));
       setTechnical(String(err));
@@ -149,6 +164,7 @@ function App() {
               <input value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} />
             </label>
             <button onClick={refreshStatus}>Refresh status</button>
+            <button onClick={runDiagnostics}>Run diagnostics</button>
             <button onClick={repairHelper}>Repair Helper</button>
             <button onClick={reset}>Reset PVN profile</button>
             <pre>{technical || "No diagnostics yet."}</pre>

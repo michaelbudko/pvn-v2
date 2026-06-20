@@ -574,8 +574,13 @@ fn ensure_service_token(paths: &ServicePaths) -> Result<String, String> {
 }
 
 fn authorize(request: &str, token: &str) -> bool {
-    let expected = format!("Authorization: Bearer {token}");
-    request.lines().any(|line| line.trim() == expected)
+    let expected = format!("Bearer {}", token.trim());
+    request.lines().skip(1).any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.trim().eq_ignore_ascii_case("authorization") && value.trim() == expected
+    })
 }
 
 fn requires_authorization(first_line: &str, path: &str) -> bool {
@@ -683,7 +688,18 @@ fn handle_client(
                 );
             }
         },
+        (true, _, "/auth-check") => serde_json::json!({
+            "ok": true,
+            "service_name": WINDOWS_SERVICE_NAME,
+        }),
         (true, _, "/diagnostics") => serde_json::json!({
+            "helper_url": format!("http://{SERVICE_ADDR}"),
+            "service_name": WINDOWS_SERVICE_NAME,
+            "service_binary_path": env::current_exe()
+                .ok()
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            "service_token_path": controller.paths.token.to_string_lossy(),
             "state": controller.status.state,
             "last_verification": controller.status.last_verification,
             "tunnel_name": TUNNEL_NAME,
@@ -905,6 +921,12 @@ mod tests {
     }
 
     #[test]
+    fn accepts_lowercase_authorization_header_from_ui_http_client() {
+        let raw = "POST /connect HTTP/1.1\r\nauthorization: Bearer correct\r\n\r\n{}";
+        assert!(authorize(raw, "correct"));
+    }
+
+    #[test]
     fn status_does_not_require_helper_token_but_mutations_do() {
         assert!(!requires_authorization("GET /status HTTP/1.1", "/status"));
         assert!(!requires_authorization(
@@ -917,6 +939,10 @@ mod tests {
             "/disconnect"
         ));
         assert!(requires_authorization("POST /reset HTTP/1.1", "/reset"));
+        assert!(requires_authorization(
+            "GET /auth-check HTTP/1.1",
+            "/auth-check"
+        ));
     }
 
     #[test]
