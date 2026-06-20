@@ -37,6 +37,9 @@ Canonical Windows helper service:
 - service name: `PVNv2Helper`
 - display name: `PVN v2 Helper`
 - binary: installed under the PVN v2 app `resources` directory
+- helper token: `C:\ProgramData\PVN v2\helper-token`
+- `/status` and `/diagnostics` are read-only and unauthenticated
+- `/connect`, `/disconnect`, and `/reset` require the helper token
 
 After installing PVN v2, this command should show the helper service:
 

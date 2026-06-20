@@ -19,6 +19,9 @@ const WINDOWS_SERVICE_NAME: &str = "PVNv2Helper";
 const TUNNEL_NAME: &str = "pvn-v2";
 const EXPECTED_PUBLIC_IP: &str = "45.63.22.174";
 const DEFAULT_API_URL: &str = "https://api-v2.45.63.22.174.sslip.io";
+const PROGRAM_DATA_DIR: &str = r"C:\ProgramData";
+const SERVICE_DATA_DIR_NAME: &str = "PVN v2";
+const HELPER_TOKEN_FILE_NAME: &str = "helper-token";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -155,9 +158,9 @@ impl ServicePaths {
     fn default() -> Self {
         let root = env::var("PVN_V2_SERVICE_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from(r"C:\ProgramData\PVNv2"));
+            .unwrap_or_else(|_| PathBuf::from(PROGRAM_DATA_DIR).join(SERVICE_DATA_DIR_NAME));
         Self {
-            token: root.join("service-token.txt"),
+            token: root.join(HELPER_TOKEN_FILE_NAME),
             private_key: root.join("client-private.key"),
             config: root.join("pvn-v2.conf"),
             root,
@@ -241,6 +244,7 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
 
     fn disconnect(&mut self) -> Result<ServiceStatus, String> {
         self.status.state = VpnState::Disconnecting;
+        self.status.last_error.clear();
         self.cleanup()?;
         if self.verifier.tunnel_active(TUNNEL_NAME) {
             self.status.state = VpnState::Error;
@@ -260,6 +264,7 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
     }
 
     fn reset(&mut self) -> Result<ServiceStatus, String> {
+        self.status.last_error.clear();
         self.cleanup()?;
         if self.paths.private_key.exists() {
             fs::remove_file(&self.paths.private_key).map_err(|err| err.to_string())?;
@@ -435,9 +440,15 @@ fn is_backend_conflict(error: &str) -> bool {
 fn ensure_service_token(paths: &ServicePaths) -> Result<String, String> {
     fs::create_dir_all(&paths.root).map_err(|err| err.to_string())?;
     if paths.token.exists() {
-        return fs::read_to_string(&paths.token)
+        let token = fs::read_to_string(&paths.token)
             .map(|value| value.trim().to_string())
-            .map_err(|err| err.to_string());
+            .map_err(|err| err.to_string())?;
+        if token.is_empty() {
+            return Err(
+                "PVN helper token is blank; reinstall PVN or repair helper service".to_string(),
+            );
+        }
+        return Ok(token);
     }
     let token = generate_private_key();
     fs::write(&paths.token, token.as_bytes()).map_err(|err| err.to_string())?;
@@ -450,7 +461,7 @@ fn authorize(request: &str, token: &str) -> bool {
 }
 
 fn requires_authorization(first_line: &str, path: &str) -> bool {
-    !(first_line.starts_with("GET") && path == "/status")
+    !(first_line.starts_with("GET") && (path == "/status" || path == "/diagnostics"))
 }
 
 fn serve_http(
@@ -753,14 +764,52 @@ mod tests {
     }
 
     #[test]
+    fn accepts_authorized_mutation_requests() {
+        let raw = "POST /connect HTTP/1.1\r\nAuthorization: Bearer correct\r\n\r\n{}";
+        assert!(authorize(raw, "correct"));
+    }
+
+    #[test]
     fn status_does_not_require_helper_token_but_mutations_do() {
         assert!(!requires_authorization("GET /status HTTP/1.1", "/status"));
+        assert!(!requires_authorization(
+            "GET /diagnostics HTTP/1.1",
+            "/diagnostics"
+        ));
         assert!(requires_authorization("POST /connect HTTP/1.1", "/connect"));
         assert!(requires_authorization(
             "POST /disconnect HTTP/1.1",
             "/disconnect"
         ));
         assert!(requires_authorization("POST /reset HTTP/1.1", "/reset"));
+    }
+
+    #[test]
+    fn helper_token_uses_canonical_program_data_path() {
+        let paths = ServicePaths::default();
+        assert_eq!(
+            paths.token,
+            PathBuf::from(PROGRAM_DATA_DIR)
+                .join(SERVICE_DATA_DIR_NAME)
+                .join(HELPER_TOKEN_FILE_NAME)
+        );
+    }
+
+    #[test]
+    fn service_restart_does_not_regenerate_token() {
+        let paths = test_paths();
+        let first = ensure_service_token(&paths).unwrap();
+        let second = ensure_service_token(&paths).unwrap();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn missing_token_is_regenerated() {
+        let paths = test_paths();
+        let first = ensure_service_token(&paths).unwrap();
+        fs::remove_file(&paths.token).unwrap();
+        let second = ensure_service_token(&paths).unwrap();
+        assert_ne!(first, second);
     }
 
     #[test]
@@ -882,18 +931,22 @@ mod tests {
         runner: MockRunner,
         verifier: MockVerifier,
     ) -> TunnelController<MockRunner, MockVerifier> {
+        let paths = test_paths();
+        TunnelController::new(paths, PathBuf::from("wireguard.exe"), runner, verifier)
+    }
+
+    fn test_paths() -> ServicePaths {
         let id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
         let root = env::temp_dir().join(format!("pvn-v2-service-test-{id}"));
-        let paths = ServicePaths {
-            token: root.join("service-token.txt"),
+        ServicePaths {
+            token: root.join(HELPER_TOKEN_FILE_NAME),
             private_key: root.join("client-private.key"),
             config: root.join("pvn-v2.conf"),
             root,
-        };
-        TunnelController::new(paths, PathBuf::from("wireguard.exe"), runner, verifier)
+        }
     }
 
     fn valid_config() -> WireGuardConfig {

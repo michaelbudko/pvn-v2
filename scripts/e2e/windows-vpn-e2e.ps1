@@ -64,8 +64,10 @@ function Remove-OwnedTunnels {
     return
   }
   foreach ($name in @("pvn-v2")) {
-    $output = & $wg /uninstalltunnelservice $name 2>&1 | Out-String
-    Write-Log "cleanup tunnel=$name exit=$LASTEXITCODE output=$($output.Trim())"
+    $escapedWg = $wg.Replace('"', '\"')
+    $output = & cmd.exe /d /c "`"$escapedWg`" /uninstalltunnelservice $name 2>&1" | Out-String
+    $exitCode = $LASTEXITCODE
+    Write-Log "cleanup tunnel=$name exit=$exitCode output=$($output.Trim())"
   }
 }
 
@@ -124,7 +126,10 @@ function Invoke-PvnService {
     [string]$Path,
     [object]$Body = $null
   )
-  $headers = @{ Authorization = "Bearer $script:ServiceToken" }
+  $headers = @{}
+  if (-not ($Method -eq "GET" -and ($Path -eq "/status" -or $Path -eq "/diagnostics"))) {
+    $headers.Authorization = "Bearer $script:ServiceToken"
+  }
   $uri = "http://127.0.0.1:47621$Path"
   try {
     if ($Method -eq "GET") {
@@ -199,7 +204,10 @@ try {
 
   Assert-PvnHelperService
 
-  $tokenPath = Join-Path $env:ProgramData "PVNv2\service-token.txt"
+  $status = Invoke-PvnService -Method GET -Path "/status"
+  Write-Log "unauthenticated_status=$($status.state)"
+
+  $tokenPath = Join-Path $env:ProgramData "PVN v2\helper-token"
   if (-not (Test-Path $tokenPath)) {
     throw "PVN v2 helper service token not found. Run PVN-v2-Windows-Setup.exe first."
   }

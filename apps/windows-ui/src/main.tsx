@@ -15,8 +15,11 @@ type ServiceStatus = {
 
 function friendlyError(error: unknown): string {
   const text = String(error);
+  if (text.toLowerCase().includes("helper token")) {
+    return "PVN helper needs repair. Open Advanced and click Repair Helper.";
+  }
   if (text.includes("401") || text.toLowerCase().includes("unauthorized")) {
-    return "PVN helper service authorization failed. Reinstall PVN or open Diagnostics.";
+    return "PVN helper needs repair. Open Advanced and click Repair Helper.";
   }
   if (text.toLowerCase().includes("wireguard")) {
     return "WireGuard is not ready. Reinstall PVN or restart Windows.";
@@ -113,6 +116,20 @@ function App() {
     }
   }
 
+  async function repairHelper() {
+    setBusy(true);
+    setError("");
+    try {
+      const message = await invoke<string>("service_repair_helper");
+      setTechnical(message);
+    } catch (err) {
+      setError(friendlyError(err));
+      setTechnical(String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <main className="shell">
       <section className={`panel vpn ${status.state}`}>
@@ -132,6 +149,7 @@ function App() {
               <input value={apiUrl} onChange={(event) => setApiUrl(event.target.value)} />
             </label>
             <button onClick={refreshStatus}>Refresh status</button>
+            <button onClick={repairHelper}>Repair Helper</button>
             <button onClick={reset}>Reset PVN profile</button>
             <pre>{technical || "No diagnostics yet."}</pre>
           </div>

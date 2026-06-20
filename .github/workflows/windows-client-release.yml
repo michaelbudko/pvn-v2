@@ -53,7 +53,7 @@ jobs:
           WINDOWS_CODESIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_CERT_PASSWORD }}
           WINDOWS_CODESIGN_TIMESTAMP_URL: ${{ secrets.WINDOWS_CODESIGN_TIMESTAMP_URL }}
         run: |
-          .\scripts\release\sign-windows-artifacts.ps1 -Paths @("apps\windows-ui\src-tauri\resources\pvn-v2-service.exe")
+          .\scripts\release\sign-windows-artifacts.ps1 -Paths @("apps\windows-ui\src-tauri\resources\pvn-v2-service.exe", "apps\windows-ui\src-tauri\resources\pvn-v2-service-payload.exe")
 
       - name: Build frontend
         run: npm run build

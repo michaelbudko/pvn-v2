@@ -16,6 +16,9 @@ The installer must create and start the canonical helper service:
 
 - service name: `PVNv2Helper`
 - display name: `PVN v2 Helper`
+- helper token path: `C:\ProgramData\PVN v2\helper-token`
+- `/status` must work without a helper token
+- protected commands use the helper token and must not return helper 401 after a clean install
 
 Verify after install:
 

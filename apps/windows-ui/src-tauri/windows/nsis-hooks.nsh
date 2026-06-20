@@ -1,4 +1,5 @@
 !macro NSIS_HOOK_PREINSTALL
+  Call PVN_StopHelperServiceForUpgrade
   Call PVN_EnsureWireGuard
 !macroend
 
@@ -33,6 +34,13 @@ Function PVN_IsWireGuardInstalled
   Push "0"
 FunctionEnd
 
+Function PVN_StopHelperServiceForUpgrade
+  DetailPrint "Stopping PVN helper service before update..."
+  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$svc = Get-Service -Name PVNv2Helper -ErrorAction SilentlyContinue; if ($svc -and $svc.Status -ne ''Stopped'') { Stop-Service -Name PVNv2Helper -Force -ErrorAction SilentlyContinue; $svc.WaitForStatus(''Stopped'', [TimeSpan]::FromSeconds(20)) }; Start-Sleep -Seconds 2"'
+  Pop $0
+  DetailPrint "PVN helper service stop exit code: $0"
+FunctionEnd
+
 Function PVN_EnsureWireGuard
   DetailPrint "Checking for official WireGuard for Windows..."
   Call PVN_IsWireGuardInstalled
@@ -62,7 +70,7 @@ Function PVN_InstallHelperService
     Abort "PVN helper service is required."
 
 service_exists:
-  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\install-helper-service.ps1" -ServiceExe "$INSTDIR\resources\pvn-v2-service.exe"'
+  nsExec::ExecToLog 'powershell -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\resources\install-helper-service.ps1" -ServiceExe "$INSTDIR\resources\pvn-v2-service.exe" -ServicePayload "$INSTDIR\resources\pvn-v2-service-payload.exe"'
   Pop $0
   DetailPrint "PVN helper service install exit code: $0"
   StrCmp $0 "0" 0 service_failed

@@ -13,6 +13,7 @@ const forbidden = [
   "pvn-v2-token",
   "fn login",
   "/api/auth/login",
+  "PVN helper service authorization failed",
 ];
 
 for (const value of forbidden) {
@@ -21,7 +22,7 @@ for (const value of forbidden) {
   }
 }
 
-for (const required of ["GO", "STOP", "Advanced", "service_connect"]) {
+for (const required of ["GO", "STOP", "Advanced", "Repair Helper", "service_connect"]) {
   if (!appSource.includes(required)) {
     throw new Error(`MVP no-login UI is missing required main-screen behavior: ${required}`);
   }
