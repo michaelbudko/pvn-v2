@@ -193,6 +193,7 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
             Ok(config) => config,
             Err(err) if is_backend_conflict(&err) => {
                 self.status.last_verification = "stale local VPN key was reset".to_string();
+                self.reset_backend_device(&request)?;
                 let private_key = self.replace_private_key()?;
                 let public_key = public_key_for_private_key(&private_key)?;
                 self.fetch_config(request, &public_key, &private_key)
@@ -321,6 +322,26 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
             dns: response.config.dns,
             allowed_ips: response.config.allowed_ips,
         })
+    }
+
+    fn reset_backend_device(&mut self, request: &ConnectRequest) -> Result<(), String> {
+        let api_url = request
+            .api_url
+            .as_deref()
+            .unwrap_or(DEFAULT_API_URL)
+            .trim_end_matches('/');
+        let client = Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()
+            .map_err(|err| self.fail(err.to_string()))?;
+        client
+            .post(format!("{api_url}/api/devices/reset"))
+            .bearer_auth(&request.backend_token)
+            .send()
+            .map_err(|err| self.fail(err.to_string()))?
+            .error_for_status()
+            .map_err(|err| self.fail(err.to_string()))?;
+        Ok(())
     }
 
     fn fail(&mut self, message: String) -> String {

@@ -135,14 +135,23 @@ function Invoke-PvnService {
   )
   $headers = @{ Authorization = "Bearer $script:ServiceToken" }
   $uri = "http://127.0.0.1:47621$Path"
-  if ($Method -eq "GET") {
-    return Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -TimeoutSec 130
+  try {
+    if ($Method -eq "GET") {
+      return Invoke-RestMethod -Uri $uri -Method Get -Headers $headers -TimeoutSec 130
+    }
+    $json = "{}"
+    if ($null -ne $Body) {
+      $json = $Body | ConvertTo-Json -Depth 5
+    }
+    return Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $json -ContentType "application/json" -TimeoutSec 130
+  } catch {
+    $detail = $_.Exception.Message
+    if ($_.ErrorDetails -and $_.ErrorDetails.Message) {
+      $detail = "$detail body=$($_.ErrorDetails.Message)"
+    }
+    Write-Log "helper_request_failed method=$Method path=$Path error=$detail"
+    throw $detail
   }
-  $json = "{}"
-  if ($null -ne $Body) {
-    $json = $Body | ConvertTo-Json -Depth 5
-  }
-  return Invoke-RestMethod -Uri $uri -Method Post -Headers $headers -Body $json -ContentType "application/json" -TimeoutSec 130
 }
 
 function Login-Backend {
