@@ -24,6 +24,7 @@ type Config struct {
 	WGDNS             string
 	WGAllowedIPs      string
 	WGDryRun          bool
+	MVPNoLogin        bool
 }
 
 func Load() (Config, error) {
@@ -41,6 +42,7 @@ func Load() (Config, error) {
 		WGDNS:             get("WG_DNS", "1.1.1.1"),
 		WGAllowedIPs:      get("WG_ALLOWED_IPS", "0.0.0.0/0"),
 		WGDryRun:          getBool("WG_DRY_RUN", false),
+		MVPNoLogin:        getBool("PVN_MVP_NO_LOGIN", false),
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err

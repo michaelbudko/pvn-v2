@@ -40,6 +40,7 @@ struct ServiceStatus {
 #[derive(Debug, Clone, Deserialize)]
 struct ConnectRequest {
     api_url: Option<String>,
+    #[serde(default)]
     backend_token: String,
 }
 
@@ -307,9 +308,11 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
             .timeout(Duration::from_secs(20))
             .build()
             .map_err(|err| err.to_string())?;
-        let response: DeviceResponse = client
-            .post(format!("{}/api/devices", api_url.trim_end_matches('/')))
-            .bearer_auth(request.backend_token)
+        let mut builder = client.post(format!("{}/api/devices", api_url.trim_end_matches('/')));
+        if !request.backend_token.trim().is_empty() {
+            builder = builder.bearer_auth(request.backend_token);
+        }
+        let response: DeviceResponse = builder
             .json(&serde_json::json!({
                 "name": "Windows PC",
                 "client_public_key": public_key,
@@ -340,9 +343,11 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
             .timeout(Duration::from_secs(20))
             .build()
             .map_err(|err| self.fail(err.to_string()))?;
-        client
-            .post(format!("{api_url}/api/devices/reset"))
-            .bearer_auth(&request.backend_token)
+        let mut builder = client.post(format!("{api_url}/api/devices/reset"));
+        if !request.backend_token.trim().is_empty() {
+            builder = builder.bearer_auth(&request.backend_token);
+        }
+        builder
             .send()
             .map_err(|err| self.fail(err.to_string()))?
             .error_for_status()
@@ -444,6 +449,10 @@ fn authorize(request: &str, token: &str) -> bool {
     request.lines().any(|line| line.trim() == expected)
 }
 
+fn requires_authorization(first_line: &str, path: &str) -> bool {
+    !(first_line.starts_with("GET") && path == "/status")
+}
+
 fn serve_http(
     controller: Arc<Mutex<TunnelController<CommandRunner, NetworkVerifier>>>,
     token: String,
@@ -485,15 +494,15 @@ fn handle_client(
     let mut buffer = [0u8; 64 * 1024];
     let read = stream.read(&mut buffer).map_err(|err| err.to_string())?;
     let request = String::from_utf8_lossy(&buffer[..read]).to_string();
-    if !authorize(&request, token) {
+    let first = request.lines().next().unwrap_or_default();
+    let path = first.split_whitespace().nth(1).unwrap_or("/");
+    if requires_authorization(first, path) && !authorize(&request, token) {
         return write_response(
             &mut stream,
             401,
             &serde_json::json!({"error":"unauthorized"}),
         );
     }
-    let first = request.lines().next().unwrap_or_default();
-    let path = first.split_whitespace().nth(1).unwrap_or("/");
     let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
     let mut controller = controller
         .lock()
@@ -741,6 +750,24 @@ mod tests {
     fn rejects_unauthorized_requests() {
         let raw = "GET /status HTTP/1.1\r\nAuthorization: Bearer wrong\r\n\r\n";
         assert!(!authorize(raw, "correct"));
+    }
+
+    #[test]
+    fn status_does_not_require_helper_token_but_mutations_do() {
+        assert!(!requires_authorization("GET /status HTTP/1.1", "/status"));
+        assert!(requires_authorization("POST /connect HTTP/1.1", "/connect"));
+        assert!(requires_authorization(
+            "POST /disconnect HTTP/1.1",
+            "/disconnect"
+        ));
+        assert!(requires_authorization("POST /reset HTTP/1.1", "/reset"));
+    }
+
+    #[test]
+    fn connect_request_allows_missing_backend_token_for_mvp_no_login() {
+        let request: ConnectRequest =
+            serde_json::from_str(r#"{"api_url":"https://api-v2.45.63.22.174.sslip.io"}"#).unwrap();
+        assert!(request.backend_token.is_empty());
     }
 
     #[test]

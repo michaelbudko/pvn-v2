@@ -39,6 +39,10 @@ jobs:
         run: cargo test
         working-directory: apps/windows-service
 
+      - name: MVP no-login UI assertions
+        run: npm run test:mvp-ui
+        working-directory: apps/windows-ui
+
       - name: Build service resource
         run: npm run build:service
         working-directory: apps/windows-ui

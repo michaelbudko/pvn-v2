@@ -46,3 +46,16 @@ func TestValidateRejectsInvalidServerPublicKey(t *testing.T) {
 		t.Fatalf("expected invalid key error, got %v", err)
 	}
 }
+
+func TestLoadReadsMVPNoLoginFlag(t *testing.T) {
+	t.Setenv("PVN_MVP_NO_LOGIN", "true")
+	t.Setenv("WG_DRY_RUN", "true")
+	t.Setenv("WG_SERVER_PUBLIC_KEY", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MVPNoLogin {
+		t.Fatal("expected PVN_MVP_NO_LOGIN=true to enable MVP no-login mode")
+	}
+}

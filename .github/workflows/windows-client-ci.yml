@@ -23,6 +23,8 @@ jobs:
         working-directory: apps/windows-ui
       - run: cargo test
         working-directory: apps/windows-service
+      - run: npm run test:mvp-ui
+        working-directory: apps/windows-ui
       - run: npm run build
         working-directory: apps/windows-ui
       - run: npm run build:service

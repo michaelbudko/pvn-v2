@@ -41,6 +41,24 @@ func TestUnauthorizedLoginFailsCleanly(t *testing.T) {
 	}
 }
 
+func TestMVPNoLoginUserIsCreatedOrResolved(t *testing.T) {
+	ctx := context.Background()
+	store := testStore(t)
+	defer store.Close()
+
+	first, err := store.MVPNoLoginUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.MVPNoLoginUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == 0 || first.Email != MVPNoLoginEmail || first.ID != second.ID {
+		t.Fatalf("unexpected MVP no-login user: first=%+v second=%+v", first, second)
+	}
+}
+
 func TestCreateOrGetDeviceIsIdempotentForSameUserAndPublicKey(t *testing.T) {
 	ctx := context.Background()
 	store := testStore(t)

@@ -28,6 +28,8 @@ jobs:
         working-directory: apps/windows-service
       - run: npm ci
         working-directory: apps/windows-ui
+      - run: npm run test:mvp-ui
+        working-directory: apps/windows-ui
       - run: npm run build
         working-directory: apps/windows-ui
       - name: Verify UI does not call WireGuard directly

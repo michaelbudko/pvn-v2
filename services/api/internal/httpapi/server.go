@@ -157,6 +157,15 @@ func (s *Server) vpnConfig(w http.ResponseWriter, r *http.Request, user db.User)
 
 func (s *Server) authenticated(next func(http.ResponseWriter, *http.Request, db.User)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Store.Cfg.MVPNoLogin {
+			user, err := s.Store.MVPNoLoginUser(r.Context())
+			if err != nil {
+				writeStoreError(w, err)
+				return
+			}
+			next(w, r, user)
+			return
+		}
 		header := strings.TrimSpace(r.Header.Get("Authorization"))
 		token := strings.TrimPrefix(header, "Bearer ")
 		if token == header {

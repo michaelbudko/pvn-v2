@@ -26,6 +26,9 @@ var (
 	ErrMisconfigured = errors.New("misconfigured")
 )
 
+const MVPNoLoginEmail = "mvp@pvn-v2.local"
+const mvpNoLoginPassword = "mvp-no-login-disabled-password"
+
 type Store struct {
 	DB  *sql.DB
 	Cfg config.Config
@@ -152,6 +155,31 @@ func (s *Store) Login(ctx context.Context, email, password string) (User, string
 		return User{}, "", err
 	}
 	return user, token, nil
+}
+
+func (s *Store) MVPNoLoginUser(ctx context.Context) (User, error) {
+	user, err := s.UserByEmail(ctx, MVPNoLoginEmail)
+	if err == nil {
+		return user, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return User{}, err
+	}
+	if err := s.UpsertUser(ctx, MVPNoLoginEmail, mvpNoLoginPassword, "user"); err != nil {
+		return User{}, err
+	}
+	return s.UserByEmail(ctx, MVPNoLoginEmail)
+}
+
+func (s *Store) UserByEmail(ctx context.Context, email string) (User, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	var user User
+	err := s.DB.QueryRowContext(ctx, `SELECT id,email,role FROM users WHERE email=?`, email).
+		Scan(&user.ID, &user.Email, &user.Role)
+	if errors.Is(err, sql.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	return user, err
 }
 
 func (s *Store) UserForToken(ctx context.Context, token string) (User, error) {

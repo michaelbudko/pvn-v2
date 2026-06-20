@@ -10,6 +10,11 @@ PVN v2 deploys beside v1. It uses:
 - VPN subnet: `10.88.0.0/24`
 - Database: `/opt/pvn-v2/pvn-v2.db`
 - Environment file: `/etc/pvn-v2/api.env`
+- MVP auth mode: `PVN_MVP_NO_LOGIN=true`
+
+`PVN_MVP_NO_LOGIN=true` is a single-user MVP testing shortcut. It makes the API
+resolve protected routes to `mvp@pvn-v2.local` without requiring a bearer token.
+Do not treat this as production authentication.
 
 Run on the VPS:
 

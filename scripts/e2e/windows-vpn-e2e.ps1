@@ -27,15 +27,6 @@ function Write-Log {
   $line | Tee-Object -FilePath $LogPath -Append
 }
 
-function Get-RequiredEnv {
-  param([string]$Name)
-  $value = [Environment]::GetEnvironmentVariable($Name)
-  if ([string]::IsNullOrWhiteSpace($value)) {
-    throw "$Name is required"
-  }
-  return $value
-}
-
 function Get-PublicIp {
   return (Invoke-RestMethod -Uri "https://api.ipify.org" -TimeoutSec 15).Trim()
 }
@@ -154,15 +145,9 @@ function Invoke-PvnService {
   }
 }
 
-function Login-Backend {
-  param([string]$ApiUrl, [string]$Email, [string]$Password)
-  $body = @{ email = $Email; password = $Password } | ConvertTo-Json
-  return Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))/api/auth/login" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 20
-}
-
 function Connect-Pvn {
-  param([string]$ApiUrl, [string]$BackendToken)
-  $status = Invoke-PvnService -Method POST -Path "/connect" -Body @{ api_url = $ApiUrl; backend_token = $BackendToken }
+  param([string]$ApiUrl)
+  $status = Invoke-PvnService -Method POST -Path "/connect" -Body @{ api_url = $ApiUrl }
   Write-Log "connect_status=$($status.state) verification=$($status.last_verification)"
   $connectedIp = Wait-PublicIp -ShouldEqual $true -Expected $ExpectedPublicIp
   if (-not (Test-TunnelActive)) {
@@ -209,9 +194,6 @@ try {
   if ([string]::IsNullOrWhiteSpace($ApiUrl)) {
     $ApiUrl = "https://api-v2.45.63.22.174.sslip.io"
   }
-  $Email = Get-RequiredEnv "PVN_V2_E2E_EMAIL"
-  $Password = Get-RequiredEnv "PVN_V2_E2E_PASSWORD"
-
   $health = Invoke-RestMethod -Uri "$($ApiUrl.TrimEnd('/'))/api/health" -TimeoutSec 20
   Write-Log "api_health=$($health.status)"
 
@@ -242,14 +224,9 @@ try {
     throw "Internet check failed before connect."
   }
 
-  $login = Login-Backend -ApiUrl $ApiUrl -Email $Email -Password $Password
-  if ([string]::IsNullOrWhiteSpace($login.token)) {
-    throw "Backend login returned blank token."
-  }
-
-  $connectedIp = Connect-Pvn -ApiUrl $ApiUrl -BackendToken $login.token
+  $connectedIp = Connect-Pvn -ApiUrl $ApiUrl
   $disconnectedIp = Disconnect-Pvn
-  $reconnectedIp = Connect-Pvn -ApiUrl $ApiUrl -BackendToken $login.token
+  $reconnectedIp = Connect-Pvn -ApiUrl $ApiUrl
   $finalIp = Disconnect-Pvn
 
   $summary = [ordered]@{

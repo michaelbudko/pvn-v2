@@ -27,11 +27,12 @@ If PVN v2 is already installed and `PVNv2Helper` is running, run:
 
 ```powershell
 cd C:\Users\MB\Documents\VpnProxy\pvn-v2
-$env:PVN_V2_E2E_EMAIL="test@example.com"
-$env:PVN_V2_E2E_PASSWORD="do-not-commit-this"
 $env:PVN_V2_E2E_API_URL="https://api-v2.45.63.22.174.sslip.io"
 .\scripts\e2e\windows-vpn-e2e.ps1
 ```
+
+PVN v2 MVP no-login mode does not require `PVN_V2_E2E_EMAIL` or
+`PVN_V2_E2E_PASSWORD`. The backend must have `PVN_MVP_NO_LOGIN=true`.
 
 To install a freshly built installer before the test, run PowerShell as Administrator:
 

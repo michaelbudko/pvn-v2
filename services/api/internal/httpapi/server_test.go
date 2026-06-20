@@ -36,6 +36,39 @@ func TestUnauthorizedRequestsFailCleanly(t *testing.T) {
 	}
 }
 
+func TestMVPNoLoginAllowsDeviceWithoutAuthorization(t *testing.T) {
+	cfg := testHTTPConfig(t)
+	cfg.MVPNoLogin = true
+	store := openHTTPStore(t, cfg)
+	t.Cleanup(func() { _ = store.Close() })
+	handler := New(store)
+
+	code, body := postDeviceNoAuth(t, handler, mustKey(t).PublicKey().String())
+	if code != http.StatusCreated {
+		t.Fatalf("expected no-login device create, got %d %s", code, body)
+	}
+	var response struct {
+		Device db.Device         `json:"device"`
+		Config db.ConfigMaterial `json:"config"`
+	}
+	decode(t, body, &response)
+	if response.Config.ServerPublicKey == "" || response.Config.Endpoint == "" || response.Config.AllowedIPs == "" {
+		t.Fatalf("blank no-login config material: %+v", response.Config)
+	}
+	user, err := store.UserByEmail(context.Background(), db.MVPNoLoginEmail)
+	if err != nil || user.ID == 0 {
+		t.Fatalf("expected MVP user to be created, user=%+v err=%v", user, err)
+	}
+}
+
+func TestMVPNoLoginFalseStillRequiresAuthorization(t *testing.T) {
+	handler, _ := testHandler(t)
+	code, body := postDeviceNoAuth(t, handler, mustKey(t).PublicKey().String())
+	if code != http.StatusUnauthorized || !strings.Contains(body, "unauthorized") {
+		t.Fatalf("expected auth to be required, got %d %s", code, body)
+	}
+}
+
 func TestDeviceProfileHTTPFlowIsIdempotent(t *testing.T) {
 	handler, store := testHandler(t)
 	token := loginToken(t, handler, store)
@@ -154,8 +187,25 @@ func testHandler(t *testing.T) (http.Handler, *db.Store) {
 
 func testStore(t *testing.T) *db.Store {
 	t.Helper()
+	return openHTTPStore(t, testHTTPConfig(t))
+}
+
+func openHTTPStore(t *testing.T, cfg config.Config) *db.Store {
+	t.Helper()
+	store, err := db.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(filepath.Join("..", "..", "migrations", "001_init.sql")); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func testHTTPConfig(t *testing.T) config.Config {
+	t.Helper()
 	serverKey := mustKey(t)
-	store, err := db.Open(config.Config{
+	return config.Config{
 		DatabasePath:      ":memory:",
 		SessionTTL:        time.Hour,
 		WGInterface:       "wg-pvn-v2",
@@ -165,14 +215,7 @@ func testStore(t *testing.T) *db.Store {
 		WGServerPublicKey: serverKey.PublicKey().String(),
 		WGDNS:             "1.1.1.1",
 		WGAllowedIPs:      "0.0.0.0/0",
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
-	if err := store.Migrate(filepath.Join("..", "..", "migrations", "001_init.sql")); err != nil {
-		t.Fatal(err)
-	}
-	return store
 }
 
 func loginToken(t *testing.T, handler http.Handler, store *db.Store) string {
@@ -204,6 +247,15 @@ func postDevice(t *testing.T, handler http.Handler, token, clientPublicKey strin
 	payload, _ := json.Marshal(map[string]string{"name": "Windows PC", "client_public_key": clientPublicKey})
 	req := httptest.NewRequest(http.MethodPost, "/api/devices", bytes.NewReader(payload))
 	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec.Code, rec.Body.String()
+}
+
+func postDeviceNoAuth(t *testing.T, handler http.Handler, clientPublicKey string) (int, string) {
+	t.Helper()
+	payload, _ := json.Marshal(map[string]string{"name": "Windows PC", "client_public_key": clientPublicKey})
+	req := httptest.NewRequest(http.MethodPost, "/api/devices", bytes.NewReader(payload))
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.String()

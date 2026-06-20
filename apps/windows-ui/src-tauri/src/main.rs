@@ -1,6 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{fs, path::PathBuf, time::Duration};
@@ -15,38 +15,9 @@ struct ServiceStatus {
     last_verification: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct LoginResponse {
-    token: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct LoginInput {
-    email: String,
-    password: String,
-}
-
 #[derive(Debug, Serialize)]
 struct ConnectInput {
     api_url: String,
-    backend_token: String,
-}
-
-#[tauri::command]
-fn login(api_url: String, email: String, password: String) -> Result<LoginResponse, String> {
-    let api_url = normalize_api_url(api_url);
-    Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|err| err.to_string())?
-        .post(format!("{}/api/auth/login", api_url.trim_end_matches('/')))
-        .json(&LoginInput { email, password })
-        .send()
-        .map_err(|err| err.to_string())?
-        .error_for_status()
-        .map_err(|err| err.to_string())?
-        .json::<LoginResponse>()
-        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -55,14 +26,13 @@ fn service_status() -> Result<ServiceStatus, String> {
 }
 
 #[tauri::command]
-fn service_connect(api_url: String, backend_token: String) -> Result<ServiceStatus, String> {
+fn service_connect(api_url: String) -> Result<ServiceStatus, String> {
     service_request(
         "POST",
         "/connect",
         Some(
             serde_json::to_value(ConnectInput {
                 api_url: normalize_api_url(api_url),
-                backend_token,
             })
             .map_err(|err| err.to_string())?,
         ),
@@ -97,27 +67,37 @@ fn service_request<T>(method: &str, path: &str, body: Option<Value>) -> Result<T
 where
     T: for<'de> Deserialize<'de>,
 {
-    let token = read_service_token()?;
     let client = Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
         .map_err(|err| err.to_string())?;
     let url = format!("{SERVICE_URL}{path}");
-    let request = match method {
+    let mut request = match method {
         "GET" => client.get(url),
         "POST" => client
             .post(url)
             .json(&body.unwrap_or_else(|| serde_json::json!({}))),
         _ => return Err("unsupported service method".to_string()),
     };
+    request = maybe_authorize_service_request(request, method, path)?;
     request
-        .bearer_auth(token)
         .send()
         .map_err(|err| err.to_string())?
         .error_for_status()
         .map_err(|err| err.to_string())?
         .json::<T>()
         .map_err(|err| err.to_string())
+}
+
+fn maybe_authorize_service_request(
+    request: RequestBuilder,
+    method: &str,
+    path: &str,
+) -> Result<RequestBuilder, String> {
+    if method == "GET" && path == "/status" {
+        return Ok(request);
+    }
+    Ok(request.bearer_auth(read_service_token()?))
 }
 
 fn read_service_token() -> Result<String, String> {
@@ -137,7 +117,6 @@ fn service_token_path() -> PathBuf {
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            login,
             service_status,
             service_connect,
             service_disconnect,
