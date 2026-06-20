@@ -189,8 +189,18 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
         fs::create_dir_all(&self.paths.root).map_err(|err| err.to_string())?;
         let private_key = self.load_or_create_private_key()?;
         let public_key = public_key_for_private_key(&private_key)?;
-        let config = self.fetch_config(request, &public_key, &private_key)?;
-        validate_wireguard_config(&config)?;
+        let config = match self.fetch_config(request.clone(), &public_key, &private_key) {
+            Ok(config) => config,
+            Err(err) if is_backend_conflict(&err) => {
+                self.status.last_verification = "stale local VPN key was reset".to_string();
+                let private_key = self.replace_private_key()?;
+                let public_key = public_key_for_private_key(&private_key)?;
+                self.fetch_config(request, &public_key, &private_key)
+                    .map_err(|retry_err| self.fail(retry_err))?
+            }
+            Err(err) => return Err(self.fail(err)),
+        };
+        validate_wireguard_config(&config).map_err(|err| self.fail(err))?;
         self.cleanup()?;
         fs::write(&self.paths.config, render_config(&config)).map_err(|err| err.to_string())?;
         let config_path = self
@@ -267,6 +277,10 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
                 .map(|value| value.trim().to_string())
                 .map_err(|err| err.to_string());
         }
+        self.replace_private_key()
+    }
+
+    fn replace_private_key(&self) -> Result<String, String> {
         let private_key = generate_private_key();
         fs::write(&self.paths.private_key, private_key.as_bytes())
             .map_err(|err| err.to_string())?;
@@ -307,6 +321,12 @@ impl<R: Runner, V: Verifier> TunnelController<R, V> {
             dns: response.config.dns,
             allowed_ips: response.config.allowed_ips,
         })
+    }
+
+    fn fail(&mut self, message: String) -> String {
+        self.status.state = VpnState::Error;
+        self.status.last_error = message.clone();
+        message
     }
 }
 
@@ -353,6 +373,10 @@ fn public_key_for_private_key(private_key: &str) -> Result<String, String> {
     let secret = StaticSecret::from(array);
     let public = PublicKey::from(&secret);
     Ok(STANDARD.encode(public.as_bytes()))
+}
+
+fn is_backend_conflict(error: &str) -> bool {
+    error.contains("409 Conflict")
 }
 
 fn ensure_service_token(paths: &ServicePaths) -> Result<String, String> {
@@ -624,6 +648,16 @@ mod tests {
             allowed_ips: "0.0.0.0/0".to_string(),
         };
         assert!(validate_wireguard_config(&config).is_err());
+    }
+
+    #[test]
+    fn detects_backend_public_key_conflict() {
+        assert!(is_backend_conflict(
+            "HTTP status client error (409 Conflict) for url"
+        ));
+        assert!(!is_backend_conflict(
+            "HTTP status client error (401 Unauthorized)"
+        ));
     }
 
     #[test]
